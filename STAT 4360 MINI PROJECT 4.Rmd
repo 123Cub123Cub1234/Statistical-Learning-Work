@@ -1,0 +1,364 @@
+---
+title: "STAT 4360 MINI PROJECT 4"
+author: "Avinash Sriram"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+# Data Cleaning
+
+```{r}
+setwd("C:\\Users\\NashS\\OneDrive\\Documents\\STAT 4360")
+diabetes <- read.csv("diabetes.csv")
+wine <- read.table("wine.txt")
+names(wine) <- c("Clarity", "Aroma", "Body", "Flavor", "Oakiness", "Quality", "Region")
+wine <- wine[-1,]
+wine$Clarity <- as.numeric(wine$Clarity)
+wine$Aroma <- as.numeric(wine$Aroma)
+wine$Body <- as.numeric(wine$Body)
+wine$Flavor <- as.numeric(wine$Flavor)
+wine$Oakiness <- as.numeric(wine$Oakiness)
+wine$Quality <- as.numeric(wine$Quality)
+colnames(diabetes) <- c("Pregnancies", "Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI", "DiabetesPedigreeFunction", "Age", "Outcome")
+```
+# Problem 1
+
+```{r}
+# Part (A)
+
+lm.fit <- lm(Quality ~ Clarity + Aroma + Body + Flavor + Oakiness + Region, data = wine)
+summary(lm.fit)
+
+library(boot)
+
+glm.fit <- glm(Quality ~ Clarity + Aroma + Body + Flavor + Oakiness + Region, data = wine)
+summary(glm.fit)
+
+cv.err <- cv.glm(wine, glm.fit)
+print(cv.err$delta[1]) # Gives me the loocv estimate
+```
+
+```{r}
+# Part (B)
+
+library(leaps)
+
+totpred <- ncol(wine) - 1
+fit.full <- regsubsets(Quality ~ Clarity + Aroma + Body + Flavor + Oakiness + Region, wine, nvmax = totpred)
+
+fit.summary <- summary(fit.full)
+
+# Best Model Given Sizes
+
+fit.summary
+names(fit.summary)
+
+fit.summary$rsq
+par(mfrow = c(2, 2))
+
+plot(fit.summary$rss,
+     xlab = "Number of Variables", ylab = "RSS",
+     type = "l"
+)
+
+plot(fit.summary$adjr2,
+     xlab = "Number of Variables", ylab = "Adjusted RSq",
+     type = "l"
+)
+
+which.max(fit.summary$adjr2)
+points(4, fit.summary$adjr2[4], col = "red", cex = 2, pch = 20)
+
+plot(fit.summary$cp,
+     xlab = "Number of Variables", ylab = "Cp",
+     type = "l"
+)
+
+which.max(fit.summary$adjr2)
+points(4, fit.summary$adjr2[4], col = "red", cex = 2, pch = 20)
+
+plot(fit.summary$bic,
+     xlab = "Number of Variables", ylab = "BIC",
+     type = "l"
+)
+
+which.max(fit.summary$adjr2)
+points(4, fit.summary$adjr2[4], col = "red", cex = 2, pch = 20)
+
+par(mfrow = c(1, 1))
+plot(fit.full, scale = "r2")
+plot(fit.full, scale = "adjr2")
+plot(fit.full, scale = "Cp")
+plot(fit.full, scale = "bic")
+
+coef(fit.full, 4)
+
+best_subset_model <- glm(Quality ~ Flavor + Oakiness + Region, data = wine)
+cv.err <- cv.glm(wine, best_subset_model)
+print(cv.err$delta[1]) # Gives me the loocv estimate
+```
+
+```{r}
+# Part (C) - Forward Stepwise selection
+
+fit.fwd <- regsubsets(Quality ~ .,
+                      data = wine, nvmax = totpred,
+                      method = "forward"
+)
+
+summary(fit.fwd)
+fit.summary <- summary(fit.fwd)
+names(fit.summary)
+which.max(fit.summary$adjr2) # Results in 4 variables
+
+coef(fit.fwd, 4)
+
+forward_stepwise_subset_model <- glm(Quality ~ Flavor + Oakiness + Region, data = wine)
+cv.err <- cv.glm(wine, forward_stepwise_subset_model)
+print(cv.err$delta[1]) # Gives me the loocv estimate
+```
+
+```{r}
+# Part (D) - Backward Stepwise
+
+fit.bwd <- regsubsets(Quality ~ .,
+                      data = wine, nvmax = totpred,
+                      method = "backward"
+)
+
+summary(fit.bwd)
+fit.summary <- summary(fit.bwd)
+names(fit.summary)
+which.max(fit.summary$adjr2) # Results in 4 variables
+
+coef(fit.fwd, 4)
+
+forward_stepwise_subset_model <- glm(Quality ~ Flavor + Oakiness + Region, data = wine)
+cv.err <- cv.glm(wine, forward_stepwise_subset_model)
+print(cv.err$delta[1]) # Gives me the loocv estimate
+```
+
+```{r}
+# Part (E) - Ridge Regression
+
+library(glmnet)
+
+y <- wine$Quality
+x <- model.matrix(Quality ~ ., wine)[, -1]
+
+grid <- 10^seq(10, -2, length = 100)
+
+ridge.mod <- glmnet(x, y, alpha = 0, lambda = grid)
+
+plot(ridge.mod, xvar = "lambda")
+# dim(coef(ridge.mod)) # Returns 8 100
+# ridge.mod$lambda[50]
+# coef(ridge.mod)[, 50]
+# sqrt(sum(coef(ridge.mod)[-1, 50]^2))
+
+set.seed(1)
+train <- sample(1:nrow(x), nrow(x)/2)
+test <- (-train)
+y.test <- y[test]
+
+ridge.mod <- glmnet(x[train, ], y[train], alpha = 0, lambda = grid, thresh = 1e-12)
+ridge.pred <- predict(ridge.mod, s = 4, newx = x[test, ])
+
+set.seed(1)
+cv.out <- cv.glmnet(x, y, alpha = 0)
+
+plot(cv.out)
+
+bestlam <- cv.out$lambda.min
+bestlam
+
+ridge.pred <- predict(ridge.mod, s = bestlam, newx = x[test, ]) # Test MSE for Best Lambda
+
+out <- glmnet(x, y, alpha = 0, nfolds = nrow(x))
+
+ridge.coef <- predict(out, type = "coefficients", s = bestlam)[1:8, ]
+
+residuals <- y.test - ridge.pred
+
+squared_residuals <- residuals^2
+
+test_mse <- mean(squared_residuals)
+
+cat("Ridge Test MSE:", test_mse, "\n")
+```
+
+```{r}
+# Part (F) - Lasso
+
+lasso.mod <- glmnet(x[train, ], y[train], alpha = 1, lambda = grid)
+
+plot(lasso.mod, xvar = "lambda")
+
+set.seed(1)
+cv.out <- cv.glmnet(x, y, alpha = 1)
+
+plot(cv.out)
+
+bestlam <- cv.out$lambda.min
+bestlam
+lasso.pred <- predict(lasso.mod, s = bestlam, newx = x[test, ]) # Test MSE for Best Lambda
+out <- glmnet(x, y, alpha = 1, lambda = grid)
+
+# Estimates for the best value of lambda
+
+lasso.coef <- predict(out, type = "coefficients", s = bestlam)[1:8, ]
+
+lasso.coef
+
+lasso.coef[lasso.coef != 0]
+
+residuals <- y.test - lasso.pred
+
+squared_residuals <- residuals^2
+
+test_mse <- mean(squared_residuals)
+
+cat("Lasso Test MSE:", test_mse, "\n")
+```
+# Problem 2
+
+```{r}
+# Part (A)
+
+log_model <- glm(Outcome ~ ., data = diabetes, family = binomial(link = "logit"))
+summary(log_model)
+
+y <- diabetes$Outcome
+y_hat <- predict(log_model)
+
+predicted_binary <- ifelse(y_hat >= 0.5, 1, 0)
+
+test_mse <- 1 - mean(y == predicted_binary)
+```
+
+```{r}
+# Part (B) - Best
+
+library(bestglm)
+
+res.bestglm <- bestglm(Xy = diabetes, family = binomial(link = "logit"), IC = "AIC", method = "exhaustive")
+summary(res.bestglm$BestModel)
+
+set.seed(1)
+x <- model.matrix(Outcome + SkinThickness ~ ., data = diabetes)[, -1]
+best_subset_model <- glm(Outcome ~ -SkinThickness, data = diabetes, family = binomial(link = "logit"))
+
+y <- diabetes$Outcome
+y_hat <- predict(best_subset_model)
+
+predicted_binary <- ifelse(y_hat >= 0.5, 1, 0)
+
+test_mse <- 1 - mean(y == predicted_binary)
+print(test_mse)
+```
+
+```{r}
+# Part (C) - Forward
+
+res.forwardglm <- bestglm(Xy = diabetes, family = binomial(link = "logit"), IC = "AIC", method = "forward")
+summary(res.forwardglm$BestModel)
+
+set.seed(1)
+x <- model.matrix(Outcome + SkinThickness ~ ., data = diabetes)[, -1]
+forward_subset_model <- glm(Outcome ~ -SkinThickness, data = diabetes, family = binomial(link = "logit"))
+
+y <- diabetes$Outcome
+y_hat <- predict(forward_subset_model)
+
+predicted_binary <- ifelse(y_hat >= 0.5, 1, 0)
+
+test_mse <- 1 - mean(y == predicted_binary)
+print(test_mse)
+```
+```{r}
+# Part (D) - Backwards
+
+res.backwardglm <- bestglm(Xy = diabetes, family = binomial(link = "logit"), IC = "AIC", method = "backward")
+summary(res.backwardglm$BestModel)
+
+set.seed(1)
+x <- model.matrix(Outcome + SkinThickness ~ ., data = diabetes)[, -1]
+backward_subset_model <- glm(Outcome ~ -SkinThickness, data = diabetes, family = binomial(link = "logit"))
+
+y <- diabetes$Outcome
+y_hat <- predict(backward_subset_model)
+
+predicted_binary <- ifelse(y_hat >= 0.5, 1, 0)
+
+test_mse <- 1 - mean(y == predicted_binary)
+print(test_mse)
+```
+
+```{r}
+# Part (E) - Ridge
+
+library(glmnet)
+
+x <- model.matrix(Outcome ~ ., data = diabetes)[, -1]
+y <- diabetes$Outcome
+grid <- 10^seq(10, -2, length = 100)
+
+ridge.mod <- glmnet(x, y, alpha = 0, lambda = grid)
+plot(ridge.mod, xvar = "lambda")
+
+set.seed(1)
+train <- sample(1:nrow(x), nrow(x)/2)
+test <- (-train)
+y.test <- y[test]
+
+ridge.mod <- glmnet(x[train, ], y[train], family = binomial(link = "logit"), alpha = 0, lambda = grid, thresh = 1e-12)
+
+set.seed(1)
+cv.out <- cv.glmnet(x, y, nfolds = 10, family = binomial(link = "logit"), alpha = 0)
+
+plot(cv.out)
+
+bestlam <- cv.out$lambda.min
+bestlam
+
+ridge.pred <- predict(ridge.mod, s = bestlam, newx = x, type = "response")
+
+out <- glmnet(x, y, family = binomial(link = "logit"), alpha = 0)
+
+ridge.coef <- predict(out, type = "coefficients", s = bestlam)[1:9, ]
+
+predicted_binary <- ifelse(ridge.pred >= 0.5, 1, 0)
+
+test_mse <- 1 - mean(predicted_binary == y)
+test_mse
+```
+
+```{r}
+# Part (F) - Lasso
+
+lasso.mod <- glmnet(x[train, ], y[train], family = binomial(link = "logit"), alpha = 1, lambda = grid)
+plot(lasso.mod, xvar = "lambda")
+
+set.seed(1)
+cv.out <- cv.glmnet(x, y, nfolds = 10, family = binomial(link = "logit"), alpha = 1)
+
+plot(cv.out)
+
+bestlam <- cv.out$lambda.min
+bestlam
+
+lasso.pred <- predict(lasso.mod, s = bestlam, newx = x, type = "response")
+
+out <- glmnet(x, y, alpha = 1, lambda = grid)
+
+lasso.coef <- predict(out, type = "coefficients", s = bestlam)[1:9, ]
+
+lasso.coef
+
+lasso.coef[lasso.coef != 0]
+
+predicted_binary <- ifelse(lasso.pred >= 0.5, 1, 0)
+
+test_mse <- 1 - mean(predicted_binary == y)
+test_mse
+```
